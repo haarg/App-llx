@@ -1,0 +1,309 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+my $VERSION;
+$VERSION = 'v1.0.0';
+
+my $is_win32 = $^O eq 'MSWin32';
+my $dir_join = $is_win32 ? "\\" : "/";
+my $dir_sep  = $is_win32 ? "/\\" : "/";
+my $path_sep = $is_win32 ? ";" : ":";
+my $abs_re = $is_win32 ? qr{\A(?:(?:\\\\|//)[^\\/]+[\\/][^\\/]+|(?:[a-zA-Z]:)?[\\/])} : qr{\A/};
+
+if (!caller) {
+  my $in_super_exclusive;
+  my $exclusive;
+  my $super_exclusive;
+  my $print;
+  my @command;
+
+  for my $i (0 .. $#ARGV) {
+    my $arg = $ARGV[$i];
+    if ($arg eq '--') {
+      @command = @ARGV[ $i+1 .. $#ARGV ];
+      last;
+    }
+    elsif ($arg eq '-h' || $arg eq '--help') {
+      require Pod::Usage;
+      Pod::Usage::pod2usage(
+        -verbose => 2,
+        -exitval => 'NOEXIT',
+        -input => $0,
+      );
+      exit 0;
+    }
+    elsif ($arg eq '-V') {
+      print "llx $VERSION\n";
+    }
+    elsif ($arg eq '-X') {
+      $super_exclusive = 1;
+    }
+    elsif ($arg eq '-x') {
+      $exclusive = 1;
+    }
+    elsif ($arg eq '-p') {
+      $print = 1;
+    }
+    elsif ($arg =~ /\A-/) {
+      die "invalid option $arg!\n";
+    }
+    else {
+      @command = @ARGV[ $i .. $#ARGV ];
+      last;
+    }
+  }
+
+  if ($print) {
+    die "Command not allowed with print (-p) option!\n"
+      if @command;
+  }
+  else {
+    die "No command given!\n"
+      if !@command;
+  }
+
+  my $cwd;
+  $cwd = sub () {
+    if ($is_win32) {
+      $cwd = defined &Win32::GetCwd ? \&Win32::GetCwd : sub () {
+        my $pwd = `cd`;
+        chomp $pwd;
+        return $pwd;
+      };
+    }
+    else {
+      for my $try (
+        '/bin/pwd',
+        '/usr/bin/pwd',
+      ) {
+        if (-x $try) {
+          $cwd = sub () {
+            my $pwd = `$try`;
+            chomp $pwd;
+            return $pwd;
+          };
+          last;
+        }
+      }
+    }
+    goto &$cwd;
+  };
+
+  my $ll = $ENV{PERL_CARTON_PATH};
+  if (!defined $ll) {
+    my $cpanfile = $ENV{PERL_CARTON_CPANFILE};
+    if (defined $cpanfile) {
+      die "PERL_CARTON_CPANFILE is set but file does not exist!\n"
+        if !-e $cpanfile;
+      ($ll = $cpanfile) =~ s{[$dir_sep]*[^$dir_sep]+\z}{};
+      if (!length $ll) {
+        $ll = $cwd->();
+      }
+      elsif ($ll !~ $abs_re) {
+        $ll = join($dir_join, $cwd->(), $ll);
+      }
+      $ll .= $dir_join . 'local';
+    }
+    else {
+      my $dir = my $pwd = $cwd->();
+      while (1) {
+        if (-e "$dir${dir_join}cpanfile" || -d "$dir${dir_join}local${dir_join}lib${dir_join}perl5") {
+          $ll = $dir . $dir_join . 'local';
+          last;
+        }
+        my ($d_dev, $d_ino) = stat($dir);
+
+        my $parent = join($dir_join, $dir, '..');
+        my ($p_dev, $p_ino) = stat($parent);
+        # at root
+        if ($p_dev eq $d_dev && $p_ino eq $d_ino) {
+          last;
+        }
+        my $cut_dir = $dir;
+        $cut_dir =~ s{[$dir_sep]*[^$dir_sep]+\z}{};
+        my ($c_dev, $c_ino) = stat($cut_dir);
+        if ($p_dev eq $c_dev && $p_ino eq $c_ino) {
+          $dir = $cut_dir;
+        }
+        else {
+          $dir = $parent;
+        }
+      }
+      die "Unable to find cpanfile or local::lib from $pwd!\n"
+        if !defined $ll;
+    }
+  }
+
+  if ($print) {
+    print $ll . "\n";
+    exit 0;
+  }
+
+  if ($super_exclusive || $exclusive) {
+    delete $ENV{PERL5LIB};
+    my $lls = delete $ENV{PERL_LOCAL_LIB_ROOT};
+    if (defined $lls) {
+      my ($ll_bin_re) = 
+        map qr{$_},
+        join "|",
+        map "\Q$_\E[$dir_sep]+bin",
+        split /$path_sep/,
+        $lls;
+
+      $ENV{PATH} =~ s{(\G|$path_sep)$ll_bin_re($path_sep|\z)}{$1 || $2}ge;
+    }
+  }
+
+  my $ll_escape = $ll;
+  $ll_escape =~ s{\\}{\\\\}g;
+  if ($ll_escape =~ s/ /\\ /g) {
+    $ll_escape = qq{"$ll_escape"};
+  }
+
+  $ENV{PERL_LOCAL_LIB_ROOT} = join($path_sep,
+    $ll,
+    exists $ENV{PERL_LOCAL_LIB_ROOT} ? $ENV{PERL_LOCAL_LIB_ROOT} : (),
+  );
+  $ENV{PERL_MB_OPT} = "--install_base $ll_escape";
+  $ENV{PERL_MM_OPT} = "INSTALL_BASE=$ll_escape";
+  $ENV{PATH} = join($path_sep,
+    "$ll/bin",
+    exists $ENV{PATH} ? $ENV{PATH} : (),
+  );
+  $ENV{PERL5LIB} = join($path_sep,
+    "$ll/lib/perl5",
+    exists $ENV{PERL5LIB} ? $ENV{PERL5LIB} : (),
+  );
+
+  if ($super_exclusive) {
+    my $me = $0;
+    if ($me !~ $abs_re) {
+      $me = join($dir_join, $cwd->(), $me);
+    }
+    die "can't find myself ($0)!\n"
+      if !-e $me;
+
+    $ENV{PERL5OPT} = join(' ',
+      qq{-M5;BEGIN{(do"\Q$me\E")->()}},
+      exists $ENV{PERL5OPT} ? $ENV{PERL5OPT} : (),
+    );
+  }
+
+  no warnings 'exec';
+  exec { $command[0] } @command;
+  warn qq{Can't exec "$command[0]": $!\n};
+  exit 127;
+}
+# super exclusive mode, where we get loaded into every perl process
+else {
+  return sub {
+    require Config;
+
+    my @base_inc = do {
+      local $ENV{PERL5OPT} = '';
+      delete $ENV{PERL5OPT};
+      my @dirs = `"$^X" -le"print for \@INC"`;
+      chomp @dirs;
+      @dirs;
+    };
+
+    while (@base_inc && @INC) {
+      if ($base_inc[-1] eq $INC[-1]) {
+        pop @base_inc;
+        pop @INC;
+      }
+      else {
+        last;
+      }
+    }
+
+    no warnings 'once';
+    my (
+      $archname,
+      $version,
+      $inc_version_list,
+      $archlibexp,
+      $privlibexp,
+    ) = @Config::Config{qw(
+      archname
+      version
+      inc_version_list
+      archlibexp
+      privlibexp
+    )};
+
+    my @sub_dirs = (
+      $archname,
+      $version,
+      (grep length, split / /, $inc_version_list),
+      "$version/$archname",
+    );
+
+    my $arch_ver_dirs = sub {
+      my $lib = shift;
+      return (
+        $lib,
+        grep -d,
+        map "$lib/$_", @sub_dirs,
+      );
+    };
+
+    my @perl5lib = exists $ENV{PERL5LIB} ? (grep length, split /$path_sep/, $ENV{PERL5LIB}) : ();
+
+    push @INC, (
+      (reverse map $arch_ver_dirs->($_), @perl5lib),
+      $archlibexp,
+      $privlibexp,
+    );
+
+    return;
+  };
+}
+__END__
+
+=head1 NAME
+
+llx - Execute in a local::lib
+
+=head1 SYNOPSIS
+
+  llx [-hpxX] [command ...]
+
+=head1 DESCRIPTION
+
+Runs a program within a L<local::lib>. Equivalent to C<carton exec>, but
+implemented as a single file with no dependencies.
+
+The C<PATH> and C<PERL5LIB> environment variables will be set up to use the
+local lib.
+
+The local lib used will be found by searching from the current directory upward
+until it finds a F<cpanfile> or a F<local/lib/perl5> directory.
+
+=head1 OPTIONS
+
+=over 4
+
+=item C<-h>
+
+=item C<--help>
+
+Shows this help text.
+
+=item C<-p>
+
+Prints the local lib directory to be used rather than running a command.
+
+=item C<-x>
+
+Exclusive mode. If this is used, the current C<PERL5LIB> environment variable
+will be cleared and only the new local lib directory will be used.
+
+=item C<-X>
+
+Super exclusive mode. If this is used, all directories aside from the core lib,
+core arch lib, and the local lib will be cleared from C<@INC>. This includes the
+core site libs and vendor libs. 
+
+=back
