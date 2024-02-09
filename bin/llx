@@ -279,7 +279,11 @@ The C<PATH> and C<PERL5LIB> environment variables will be set up to use the
 local lib.
 
 The local lib used will be found by searching from the current directory upward
-until it finds a F<cpanfile> or a F<local/lib/perl5> directory.
+until it finds a F<cpanfile> or a F<local/lib/perl5> directory. The F<locaL>
+subdirectory of that path will be used as the local lib. If the
+C<PERL_CARTON_PATH> environment variable is set, it will be used for the local
+lib rather than searching. If the C<PERL_CARTON_CPANFILE> environment variable
+is set, it will be used as the path to the F<cpanfile> rather than searching.
 
 =head1 OPTIONS
 
