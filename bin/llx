@@ -112,6 +112,7 @@ if (!caller) {
     }
     elsif ($arg eq '-V') {
       print "llx $VERSION\n";
+      exit 0;
     }
     elsif ($arg eq '-X') {
       $super_exclusive = 1;
