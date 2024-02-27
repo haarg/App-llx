@@ -9,7 +9,89 @@ my $is_win32 = $^O eq 'MSWin32';
 my $dir_join = $is_win32 ? "\\" : "/";
 my $dir_sep  = $is_win32 ? "/\\" : "/";
 my $path_sep = $is_win32 ? ";" : ":";
-my $abs_re = $is_win32 ? qr{\A(?:(?:\\\\|//)[^\\/]+[\\/][^\\/]+|(?:[a-zA-Z]:)?[\\/])} : qr{\A/};
+my $abs_re   = $is_win32 ? qr{\A(?:(?:\\\\|//)[^\\/]+[\\/][^\\/]+|(?:[a-zA-Z]:)?[\\/])} : qr{\A/};
+
+my $dirname = sub {
+  my $path = shift;
+  $path =~ s{($abs_re)?}{}o;
+  my $abs = $1;
+  $path =~ s{[$dir_sep]*[^$dir_sep]+[$dir_sep]*\z}{}o;
+  $path = "$abs$path"
+    if defined $abs;
+  return '.'
+    if !length $path;
+  return $path;
+};
+
+my $find_parent = sub {
+  my $dir = shift;
+
+  my $parent = join($dir_join, $dir, '..');
+
+  my ($d_dev, $d_ino) = stat($dir);
+  my ($p_dev, $p_ino) = stat($parent);
+  # at root
+  if ($p_dev eq $d_dev && $p_ino eq $d_ino) {
+    return undef;
+  }
+
+  my $cut_dir = $dirname->($dir);
+  if ($cut_dir eq $dir) {
+    return undef;
+  }
+  my ($c_dev, $c_ino) = stat($cut_dir);
+  if ($p_dev eq $c_dev && $p_ino eq $c_ino) {
+    return $cut_dir;
+  }
+
+  return $parent;
+};
+
+my $cwd;
+$cwd = sub () {
+  if ($is_win32) {
+    $cwd = defined &Win32::GetCwd ? \&Win32::GetCwd : sub () {
+      my $pwd = `cd`;
+      chomp $pwd;
+      return $pwd;
+    };
+  }
+  else {
+    for my $try (
+      '/bin/pwd',
+      '/usr/bin/pwd',
+    ) {
+      if (-x $try) {
+        $cwd = sub () {
+          my $pwd = `$try`;
+          chomp $pwd;
+          return $pwd;
+        };
+        last;
+      }
+    }
+  }
+  goto &$cwd;
+};
+
+my $join_dir = sub { join $dir_join, @_ };
+my $split_dir = sub { split /[$dir_sep]/o, $_[0] };
+
+my $rel2abs = sub {
+  my ($path, $rel) = @_;
+  return $path
+    if $path !~ $abs_re;
+
+  if (!defined $rel) {
+    $rel = $cwd->();
+  }
+
+  $path =~ s{[$dir_sep]\z}{}o;
+  return $rel
+    if $path eq '.' || $path eq '';
+
+  $join_dir->($rel, $path);
+};
 
 if (!caller) {
   my $in_super_exclusive;
@@ -63,72 +145,31 @@ if (!caller) {
       if !@command;
   }
 
-  my $cwd;
-  $cwd = sub () {
-    if ($is_win32) {
-      $cwd = defined &Win32::GetCwd ? \&Win32::GetCwd : sub () {
-        my $pwd = `cd`;
-        chomp $pwd;
-        return $pwd;
-      };
-    }
-    else {
-      for my $try (
-        '/bin/pwd',
-        '/usr/bin/pwd',
-      ) {
-        if (-x $try) {
-          $cwd = sub () {
-            my $pwd = `$try`;
-            chomp $pwd;
-            return $pwd;
-          };
-          last;
-        }
-      }
-    }
-    goto &$cwd;
-  };
-
   my $ll = $ENV{PERL_CARTON_PATH};
   if (!defined $ll) {
     my $cpanfile = $ENV{PERL_CARTON_CPANFILE};
     if (defined $cpanfile) {
       die "PERL_CARTON_CPANFILE is set but file does not exist!\n"
         if !-e $cpanfile;
-      ($ll = $cpanfile) =~ s{[$dir_sep]*[^$dir_sep]+\z}{};
-      if (!length $ll) {
-        $ll = $cwd->();
-      }
-      elsif ($ll !~ $abs_re) {
-        $ll = join($dir_join, $cwd->(), $ll);
-      }
-      $ll .= $dir_join . 'local';
+      my $dir = $rel2abs->($dirname->($cpanfile));
+      $ll = $join_dir->($dir, 'local');
+      $base_dir = $dir;
     }
     else {
       my $dir = my $pwd = $cwd->();
       while (1) {
-        if (-e "$dir${dir_join}cpanfile" || -d "$dir${dir_join}local${dir_join}lib${dir_join}perl5") {
-          $ll = $dir . $dir_join . 'local';
+        if (
+          -e $join_dir->($dir, 'cpanfile') or
+          -d $join_dir->($dir, 'local', 'lib', 'perl5')
+        ) {
+          $ll = $join_dir->($dir, 'local');
+          $base_dir = $dir;
           last;
         }
-        my ($d_dev, $d_ino) = stat($dir);
-
-        my $parent = join($dir_join, $dir, '..');
-        my ($p_dev, $p_ino) = stat($parent);
-        # at root
-        if ($p_dev eq $d_dev && $p_ino eq $d_ino) {
-          last;
-        }
-        my $cut_dir = $dir;
-        $cut_dir =~ s{[$dir_sep]*[^$dir_sep]+\z}{};
-        my ($c_dev, $c_ino) = stat($cut_dir);
-        if ($p_dev eq $c_dev && $p_ino eq $c_ino) {
-          $dir = $cut_dir;
-        }
-        else {
-          $dir = $parent;
-        }
+        my $parent = $find_parent->($dir);
+        last
+          if !defined $parent;
+        $dir = $parent;
       }
       die "Unable to find cpanfile or local::lib from $pwd!\n"
         if !defined $ll;
@@ -140,18 +181,20 @@ if (!caller) {
     exit 0;
   }
 
+  my @bins = $join_dir->($ll, 'bin');
+  my @libs = $join_dir->($ll, 'lib', 'perl5');
+
   if ($super_exclusive || $exclusive) {
     delete $ENV{PERL5LIB};
     my $lls = delete $ENV{PERL_LOCAL_LIB_ROOT};
     if (defined $lls) {
-      my ($ll_bin_re) = 
-        map qr{$_},
-        join "|",
+      my $ll_bin_match =
+        join '|',
         map "\Q$_\E[$dir_sep]+bin",
         split /$path_sep/,
         $lls;
 
-      $ENV{PATH} =~ s{(\G|$path_sep)$ll_bin_re($path_sep|\z)}{$1 || $2}ge;
+      $ENV{PATH} =~ s{(\G|$path_sep)(?:$ll_bin_match)($path_sep|\z)}{$1}g;
     }
   }
 
@@ -161,26 +204,23 @@ if (!caller) {
     $ll_escape = qq{"$ll_escape"};
   }
 
-  $ENV{PERL_LOCAL_LIB_ROOT} = join($path_sep,
-    $ll,
-    exists $ENV{PERL_LOCAL_LIB_ROOT} ? $ENV{PERL_LOCAL_LIB_ROOT} : (),
-  );
+  my $add_env = sub {
+    my ($var, @add) = @_;
+    $ENV{$var} = join($path_sep,
+      $ll,
+      exists $ENV{$var} ? $ENV{$var} : (),
+    );
+  };
+
+  $add_env->(PERL_LOCAL_LIB_ROOT => $ll);
+  $add_env->(PATH => @bins);
+  $add_env->(PERL5LIB => @libs);
   $ENV{PERL_MB_OPT} = "--install_base $ll_escape";
   $ENV{PERL_MM_OPT} = "INSTALL_BASE=$ll_escape";
-  $ENV{PATH} = join($path_sep,
-    "$ll/bin",
-    exists $ENV{PATH} ? $ENV{PATH} : (),
-  );
-  $ENV{PERL5LIB} = join($path_sep,
-    "$ll/lib/perl5",
-    exists $ENV{PERL5LIB} ? $ENV{PERL5LIB} : (),
-  );
 
   if ($super_exclusive) {
-    my $me = $0;
-    if ($me !~ $abs_re) {
-      $me = join($dir_join, $cwd->(), $me);
-    }
+    my $me = $rel2abs->($0);
+
     die "can't find myself ($0)!\n"
       if !-e $me;
 
@@ -209,8 +249,8 @@ else {
     };
 
     while (@base_inc && @INC) {
-      if ($base_inc[-1] eq $INC[-1]) {
-        pop @base_inc;
+      my $last = pop @base_inc;
+      if ($last eq $INC[-1]) {
         pop @INC;
       }
       else {
@@ -260,6 +300,9 @@ else {
     return;
   };
 }
+
+1;
+
 __END__
 
 =head1 NAME
