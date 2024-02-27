@@ -349,6 +349,8 @@ will be cleared and only the new local lib directory will be used.
 
 =item C<-X>
 
+B<EXPERIMENTAL>
+
 Super exclusive mode. If this is used, all directories aside from the core lib,
 core arch lib, and the local lib will be cleared from C<@INC>. This includes the
 core site libs and vendor libs. 
