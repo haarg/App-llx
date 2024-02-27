@@ -107,13 +107,8 @@ if (!caller) {
       last;
     }
     elsif ($arg eq '-h' || $arg eq '--help') {
-      require Pod::Usage;
-      Pod::Usage::pod2usage(
-        -verbose => 2,
-        -exitval => 'NOEXIT',
-        -input => $0,
-      );
-      exit 0;
+      exec 'pod2usage', qw(-exit 0 -verbose 2), $0;
+      exit 127;
     }
     elsif ($arg eq '-V') {
       print "llx $VERSION\n";
