@@ -98,6 +98,7 @@ if (!caller) {
   my $exclusive;
   my $super_exclusive;
   my $print;
+  my $add_lib;
   my @command;
 
   for my $i (0 .. $#ARGV) {
@@ -123,6 +124,9 @@ if (!caller) {
     elsif ($arg eq '-p') {
       $print = 1;
     }
+    elsif ($arg eq '-l') {
+      $add_lib = 1;
+    }
     elsif ($arg =~ /\A-/) {
       die "invalid option $arg!\n";
     }
@@ -141,8 +145,12 @@ if (!caller) {
       if !@command;
   }
 
+  my $base_dir;
   my $ll = $ENV{PERL_CARTON_PATH};
-  if (!defined $ll) {
+  if (defined $ll) {
+    $base_dir = $find_parent->($ll);
+  }
+  else {
     my $cpanfile = $ENV{PERL_CARTON_CPANFILE};
     if (defined $cpanfile) {
       die "PERL_CARTON_CPANFILE is set but file does not exist!\n"
@@ -180,6 +188,11 @@ if (!caller) {
   my @bins = $join_dir->($ll, 'bin');
   my @libs = $join_dir->($ll, 'lib', 'perl5');
 
+  if ($add_lib) {
+    unshift @bins, grep -d, map $join_dir->($base_dir, $_), 'bin', 'script';
+    unshift @libs, $join_dir->($base_dir, 'lib');
+  }
+
   if ($super_exclusive || $exclusive) {
     delete $ENV{PERL5LIB};
     my $lls = delete $ENV{PERL_LOCAL_LIB_ROOT};
@@ -203,7 +216,7 @@ if (!caller) {
   my $add_env = sub {
     my ($var, @add) = @_;
     $ENV{$var} = join($path_sep,
-      $ll,
+      @add,
       exists $ENV{$var} ? $ENV{$var} : (),
     );
   };
@@ -307,7 +320,7 @@ llx - Execute in a local::lib
 
 =head1 SYNOPSIS
 
-  llx [-hpxX] [command ...]
+  llx [-lhpxX] [command ...]
 
 =head1 DESCRIPTION
 
@@ -333,6 +346,12 @@ is set, it will be used as the path to the F<cpanfile> rather than searching.
 =item C<--help>
 
 Shows this help text.
+
+=item C<-l>
+
+B<EXPERIMENTAL>
+
+Also adds the C<lib> directory next to the local lib directory to C<PERL5LIB>.
 
 =item C<-p>
 
