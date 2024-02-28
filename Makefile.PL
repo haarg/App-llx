@@ -51,6 +51,17 @@ my %MM_ARGS = (
   ],
 );
 
+{
+  package MY;
+
+  sub init_dist {
+    my $self = shift;
+    $self->{FIXIN} = $self->oneliner('Fixin->fixin(shift)', ["-Iinc", "-MFixin"]);
+    $self->SUPER::init_dist(@_);
+  }
+}
+
+
 ## BOILERPLATE ###############################################################
 require ExtUtils::MakeMaker;
 (do './maint/Makefile.PL.include' or die $@) unless -f 'META.yml';
