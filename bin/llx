@@ -11,89 +11,89 @@ my $dir_sep  = $is_win32 ? "/\\" : "/";
 my $path_sep = $is_win32 ? ";" : ":";
 my $abs_re   = $is_win32 ? qr{\A(?:(?:\\\\|//)[^\\/]+[\\/][^\\/]+|(?:[a-zA-Z]:)?[\\/])} : qr{\A/};
 
-my $dirname = sub {
-  my $path = shift;
-  $path =~ s{($abs_re)?}{}o;
-  my $abs = $1;
-  $path =~ s{[$dir_sep]*[^$dir_sep]+[$dir_sep]*\z}{}o;
-  $path = "$abs$path"
-    if defined $abs;
-  return '.'
-    if !length $path;
-  return $path;
-};
+if (!caller) {
+  my $dirname = sub {
+    my $path = shift;
+    $path =~ s{($abs_re)?}{}o;
+    my $abs = $1;
+    $path =~ s{[$dir_sep]*[^$dir_sep]+[$dir_sep]*\z}{}o;
+    $path = "$abs$path"
+      if defined $abs;
+    return '.'
+      if !length $path;
+    return $path;
+  };
 
-my $find_parent = sub {
-  my $dir = shift;
+  my $find_parent = sub {
+    my $dir = shift;
 
-  my $parent = join($dir_join, $dir, '..');
+    my $parent = join($dir_join, $dir, '..');
 
-  my ($d_dev, $d_ino) = stat($dir);
-  my ($p_dev, $p_ino) = stat($parent);
-  # at root
-  if ($p_dev eq $d_dev && $p_ino eq $d_ino) {
-    return undef;
-  }
+    my ($d_dev, $d_ino) = stat($dir);
+    my ($p_dev, $p_ino) = stat($parent);
+    # at root
+    if ($p_dev eq $d_dev && $p_ino eq $d_ino) {
+      return undef;
+    }
 
-  my $cut_dir = $dirname->($dir);
-  if ($cut_dir eq $dir) {
-    return undef;
-  }
-  my ($c_dev, $c_ino) = stat($cut_dir);
-  if ($p_dev eq $c_dev && $p_ino eq $c_ino) {
-    return $cut_dir;
-  }
+    my $cut_dir = $dirname->($dir);
+    if ($cut_dir eq $dir) {
+      return undef;
+    }
+    my ($c_dev, $c_ino) = stat($cut_dir);
+    if ($p_dev eq $c_dev && $p_ino eq $c_ino) {
+      return $cut_dir;
+    }
 
-  return $parent;
-};
+    return $parent;
+  };
 
-my $cwd;
-$cwd = sub () {
-  if ($is_win32) {
-    $cwd = defined &Win32::GetCwd ? \&Win32::GetCwd : sub () {
-      my $pwd = `cd`;
-      chomp $pwd;
-      return $pwd;
-    };
-  }
-  else {
-    for my $try (
-      '/bin/pwd',
-      '/usr/bin/pwd',
-    ) {
-      if (-x $try) {
-        $cwd = sub () {
-          my $pwd = `$try`;
-          chomp $pwd;
-          return $pwd;
-        };
-        last;
+  my $cwd;
+  $cwd = sub () {
+    if ($is_win32) {
+      $cwd = defined &Win32::GetCwd ? \&Win32::GetCwd : sub () {
+        my $pwd = `cd`;
+        chomp $pwd;
+        return $pwd;
+      };
+    }
+    else {
+      for my $try (
+        '/bin/pwd',
+        '/usr/bin/pwd',
+      ) {
+        if (-x $try) {
+          $cwd = sub () {
+            my $pwd = `$try`;
+            chomp $pwd;
+            return $pwd;
+          };
+          last;
+        }
       }
     }
-  }
-  goto &$cwd;
-};
+    goto &$cwd;
+  };
 
-my $join_dir = sub { join $dir_join, @_ };
-my $split_dir = sub { split /[$dir_sep]/o, $_[0] };
+  my $join_dir = sub { join $dir_join, @_ };
+  my $split_dir = sub { split /[$dir_sep]/o, $_[0] };
 
-my $rel2abs = sub {
-  my ($path, $rel) = @_;
-  return $path
-    if $path !~ $abs_re;
+  my $rel2abs = sub {
+    my ($path, $rel) = @_;
+    return $path
+      if $path !~ $abs_re;
 
-  if (!defined $rel) {
-    $rel = $cwd->();
-  }
+    if (!defined $rel) {
+      $rel = $cwd->();
+    }
 
-  $path =~ s{[$dir_sep]\z}{}o;
-  return $rel
-    if $path eq '.' || $path eq '';
+    $path =~ s{[$dir_sep]\z}{}o;
+    return $rel
+      if $path eq '.' || $path eq '';
 
-  $join_dir->($rel, $path);
-};
+    $join_dir->($rel, $path);
+  };
 
-if (!caller) {
   my $in_super_exclusive;
   my $exclusive;
   my $super_exclusive;
