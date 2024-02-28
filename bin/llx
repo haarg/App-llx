@@ -330,12 +330,10 @@ implemented as a single file with no dependencies.
 The C<PATH> and C<PERL5LIB> environment variables will be set up to use the
 local lib.
 
-The local lib used will be found by searching from the current directory upward
-until it finds a F<cpanfile> or a F<local/lib/perl5> directory. The F<locaL>
-subdirectory of that path will be used as the local lib. If the
-C<PERL_CARTON_PATH> environment variable is set, it will be used for the local
-lib rather than searching. If the C<PERL_CARTON_CPANFILE> environment variable
-is set, it will be used as the path to the F<cpanfile> rather than searching.
+By default, the local lib used will be found by searching from the current
+directory upward until it finds a F<cpanfile> or a F<local/lib/perl5>
+directory. The F<local> subdirectory of that path will be used as the local
+lib.
 
 =head1 OPTIONS
 
@@ -369,5 +367,21 @@ B<EXPERIMENTAL>
 Super exclusive mode. If this is used, all directories aside from the core lib,
 core arch lib, and the local lib will be cleared from C<@INC>. This includes the
 core site libs and vendor libs. 
+
+=back
+
+=head1 ENVIRONMENT VARIABLES
+
+=over 4
+
+=item C<PERL_CARTON_PATH>
+
+This specifies the path to the local lib. If set, it will be used rather than
+searching upward.
+
+=item C<PERL_CARTON_CPANFILE>
+
+This specifies the path to a F<cpanfile>. If set, a F<local> directory in the
+same directory as the specified F<cpanfile> will be used rather than searching.
 
 =back
